@@ -12,5 +12,5 @@ deployment:
     - /opt/cpanel/ea-nodejs22/bin/yarn workspace @calcom/prisma db-deploy
     - /opt/cpanel/ea-nodejs22/bin/yarn build
     # Restart Passenger
-    - mkdir -p "$APP_DIR/tmp"
-    - touch "$APP_DIR/tmp/restart.txt"
+    - /bin/mkdir -p "$APP_DIR/tmp"
+    - /usr/bin/touch "$APP_DIR/tmp/restart.txt"
