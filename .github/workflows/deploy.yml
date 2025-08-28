@@ -18,6 +18,7 @@ jobs:
       # Optional public vars
       NEXT_PUBLIC_WEBAPP_URL: ${{ vars.NEXT_PUBLIC_WEBAPP_URL || 'https://cal.sitepact.com' }}
       NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max-old-space-size=6144
 
     steps:
       - name: Checkout
@@ -36,7 +37,7 @@ jobs:
 
       - name: Build (standalone)
         run: |
-          node .yarn/releases/yarn-3.4.1.cjs build
+          node .yarn/releases/yarn-3.4.1.cjs build -- --concurrency=1
 
       - name: Include Prisma engines for runtime
         run: |
