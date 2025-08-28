@@ -104,5 +104,6 @@ i18n.cache
 /cgi-bin/
 /tmp/
 /error_log
+.env.cpanel
 
 
