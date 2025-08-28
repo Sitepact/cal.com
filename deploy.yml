@@ -2,14 +2,21 @@ name: Build & Deploy Cal.com to cPanel
 
 on:
   push:
-    branches: [ main ]          # deploy on push to main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
     env:
-      NEXT_PUBLIC_WEBAPP_URL: https://cal.sitepact.com
+      # Required by your next.config.js
+      BUILD_STANDALONE: "true"
+      NEXTAUTH_URL: "https://cal.sitepact.com"
+      NEXTAUTH_SECRET: ${{ secrets.BUILD_NEXTAUTH_SECRET }}
+      CALENDSO_ENCRYPTION_KEY: ${{ secrets.BUILD_CALENDSO_ENCRYPTION_KEY }}
+
+      # Optional public vars
+      NEXT_PUBLIC_WEBAPP_URL: ${{ vars.NEXT_PUBLIC_WEBAPP_URL || 'https://cal.sitepact.com' }}
       NEXT_TELEMETRY_DISABLED: 1
 
     steps:
@@ -75,21 +82,19 @@ jobs:
             APP_DIR="${{ secrets.APP_DIR }}"
             cd "$APP_DIR"
 
-            # Ensure dirs exist
             mkdir -p releases tmp
 
-            # Find the uploaded tarball (from the SCP step)
             TGZ="releases/calcom-standalone-${{ github.sha }}.tgz"
             [ -f "$TGZ" ] || TGZ="$(ls -t releases/*.tgz | head -1)"
 
-            # Clean previous runtime bundle (keep .env.cpanel and tmp)
+            # Clean previous runtime (keep .env.cpanel and tmp/)
             rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public || true
 
             # Extract new runtime bundle to app dir
             tar -xzf "$TGZ" -C .
             rm -f "$TGZ"
 
-            # Recreate app.js that runs the standalone server
+            # Recreate app.js that runs the prebuilt server
             cat > app.js <<'EOF'
             // app.js — run the prebuilt standalone Next.js server
             const path = require('path');
@@ -97,10 +102,10 @@ jobs:
             require(path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'));
             EOF
 
-            # Load server-only env for Prisma migrations (uses DATABASE_DIRECT_URL)
+            # Load server-only env for Prisma migrations (kept off-git)
             set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
 
-            # Run DB migrations against Supabase
+            # Run DB migrations (uses DATABASE_DIRECT_URL)
             /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy --schema packages/prisma/schema.prisma
 
             # Restart Passenger
