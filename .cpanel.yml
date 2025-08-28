@@ -3,22 +3,21 @@ deployment:
   tasks:
     - cd /home/primary/public_html/cal.sitepact.com
 
-    # Extra heap for build
-    - export NODE_OPTIONS="--max-old-space-size=2048"
+    # More RAM for install/build
+    - export NODE_OPTIONS="--max-old-space-size=4096"
 
-    # Load build-time env (kept OFF-GIT)
+    # Load build-time env (keep .env.cpanel OFF-GIT)
     - set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
 
-    # Install deps from yarn.lock (Yarn v1 uses node_modules/)
-    - /opt/cpanel/ea-nodejs22/bin/yarn install --frozen-lockfile
+    # Install deps with vendored Yarn (uses node_modules via .yarnrc.yml)
+    - node .yarn/releases/yarn-3.4.1.cjs install --immutable --inline-builds
 
-    # Prisma migrations (workspace script first, fallback to CLI)
-    - /opt/cpanel/ea-nodejs22/bin/yarn workspace @calcom/prisma db-deploy \
-        || /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy
+    # Prisma migrations (workspace script first; fallback to CLI)
+    - node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/prisma db-deploy \
+        || npx prisma migrate deploy
 
     # Build
-    - /opt/cpanel/ea-nodejs22/bin/yarn build
+    - node .yarn/releases/yarn-3.4.1.cjs build
 
     # Restart Passenger
-    - mkdir -p tmp
-    - touch tmp/restart.txt
+    - mkdir -p tmp && touch tmp/restart.txt
