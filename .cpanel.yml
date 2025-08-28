@@ -2,16 +2,23 @@
 deployment:
   tasks:
     - cd /home/primary/public_html/cal.sitepact.com
+
+    # Extra heap for build
     - export NODE_OPTIONS="--max-old-space-size=2048"
-    # Load build-time env
+
+    # Load build-time env (kept OFF-GIT)
     - set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
-    # Install Yarn classic globally (no Corepack needed)
-    - /opt/cpanel/ea-nodejs22/bin/npm i -g yarn@1.22.22
-    - yarn --version
-    # Install deps from yarn.lock, then migrate & build
-    - yarn install --frozen-lockfile
-    - yarn workspace @calcom/prisma db-deploy || /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy
-    - yarn build
+
+    # Install deps from yarn.lock (Yarn v1 uses node_modules/)
+    - /opt/cpanel/ea-nodejs22/bin/yarn install --frozen-lockfile
+
+    # Prisma migrations (workspace script first, fallback to CLI)
+    - /opt/cpanel/ea-nodejs22/bin/yarn workspace @calcom/prisma db-deploy \
+        || /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy
+
+    # Build
+    - /opt/cpanel/ea-nodejs22/bin/yarn build
+
     # Restart Passenger
     - mkdir -p tmp
     - touch tmp/restart.txt
