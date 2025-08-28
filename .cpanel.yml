@@ -1,16 +1,14 @@
 ---
 deployment:
   tasks:
-    # Work in the repo path that cPanel checked out
-    - export APP_DIR="$(pwd)"
-    # Use Node 22 from EasyApache + Yarn via Corepack
+    - cd /home/primary/public_html/cal.sitepact.com
+    - export NODE_OPTIONS="--max-old-space-size=2048"
+    - set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
     - /opt/cpanel/ea-nodejs22/bin/node -v
     - /opt/cpanel/ea-nodejs22/bin/corepack enable
     - /opt/cpanel/ea-nodejs22/bin/corepack prepare yarn@stable --activate
-    # Install deps, run Prisma migrations, build
     - /opt/cpanel/ea-nodejs22/bin/yarn install --immutable
     - /opt/cpanel/ea-nodejs22/bin/yarn workspace @calcom/prisma db-deploy
     - /opt/cpanel/ea-nodejs22/bin/yarn build
-    # Restart Passenger
-    - /bin/mkdir -p "$APP_DIR/tmp"
-    - /usr/bin/touch "$APP_DIR/tmp/restart.txt"
+    - mkdir -p tmp
+    - touch tmp/restart.txt
