@@ -97,3 +97,12 @@ apps/auth
 !.yarn/sdks
 !.yarn/versions
 i18n.cache
+
+# cPanel / webroot artifacts
+/.htaccess
+/.well-known/
+/cgi-bin/
+/tmp/
+/error_log
+
+
