@@ -43,8 +43,7 @@ jobs:
 
       - name: Next build (apps/web)
         run: |
-          # Run Next directly to ensure .next/standalone is produced
-          node apps/web/node_modules/.bin/next build apps/web
+          node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/web build
 
       - name: Verify build outputs
         run: |
