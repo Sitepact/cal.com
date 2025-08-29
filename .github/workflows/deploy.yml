@@ -36,11 +36,12 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
       - name: Generate Prisma Client (include RHEL engine)
+        working-directory: packages/prisma
         env:
-          # belt-and-suspenders: tell Prisma to fetch both engines even if schema caching kicks in
+          # ensure both engines are downloaded
           PRISMA_CLI_BINARY_TARGETS: debian-openssl-3.0.x,rhel-openssl-1.1.x
         run: |
-          npx prisma@5.4.2 generate --schema packages/prisma/schema.prisma
+          npx prisma generate --schema schema.prisma
 
       - name: Build deps with Turbo (low parallelism)
         run: |
