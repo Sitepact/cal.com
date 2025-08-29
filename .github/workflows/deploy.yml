@@ -44,10 +44,19 @@ jobs:
 
       - name: Verify build outputs
         run: |
-          test -f apps/web/.next/standalone/apps/web/server.js || {
-            echo "❌ Missing standalone server.js"; exit 1;
-          }
-          echo "✅ Found standalone server.js"
+          set -e
+          A="apps/web/.next/standalone/server.js"
+          B="apps/web/.next/standalone/apps/web/server.js"
+          if [ -f "$A" ]; then
+            echo "✅ Found $A"
+          elif [ -f "$B" ]; then
+            echo "✅ Found $B"
+          else
+            echo "❌ Missing standalone server.js in both expected locations."
+            echo "🔎 Listing possible matches under apps/web/.next:"
+            find apps/web/.next -maxdepth 4 -type f -name 'server.js' -print || true
+            exit 1
+          fi
 
       - name: Include Prisma engines for runtime
         run: |
@@ -109,12 +118,27 @@ jobs:
             tar -xzf "$TGZ" -C .
             rm -f "$TGZ"
 
-            # Recreate app.js that runs the prebuilt server
+            # Recreate app.js that runs the prebuilt server (try both common paths)
             cat > app.js <<'EOF'
             // app.js — run the prebuilt standalone Next.js server
             const path = require('path');
             process.env.PORT = process.env.PORT || '3000'; // Passenger sets this
-            require(path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'));
+
+            const candidates = [
+              path.join(__dirname, 'apps/web/.next/standalone/server.js'),
+              path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'),
+            ];
+
+            let started = false, lastErr;
+            for (const p of candidates) {
+              try { require(p); started = true; break; }
+              catch (e) { lastErr = e; }
+            }
+            if (!started) {
+              console.error('Could not find standalone server.js in expected locations.');
+              if (lastErr) console.error(lastErr);
+              process.exit(1);
+            }
             EOF
 
             # Load server-only env for Prisma migrations (kept off-git)
