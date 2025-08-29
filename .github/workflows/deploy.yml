@@ -57,9 +57,14 @@ jobs:
           else
             echo "❌ Missing standalone server.js in both expected locations."
             echo "🔎 Listing possible matches under apps/web/.next:"
-            find apps/web/.next -maxdepth 4 -type f -name 'server.js' -print || true
+            find apps/web/.next -maxdepth 5 -type f -name 'server.js' -print || true
             exit 1
           fi
+          # Also ensure Prisma schema exists before packaging
+          test -f packages/prisma/schema.prisma || {
+            echo "❌ Missing packages/prisma/schema.prisma (needed for migrations)"; exit 1;
+          }
+          echo "✅ Found packages/prisma/schema.prisma"
 
       - name: Include Prisma engines for runtime
         run: |
@@ -73,7 +78,7 @@ jobs:
 
       - name: Package runtime bundle
         run: |
-          FILES="apps/web/.next/standalone apps/web/public"
+          FILES="apps/web/.next/standalone apps/web/public packages/prisma"
           if [ -d "apps/web/.next/static" ]; then
             FILES="$FILES apps/web/.next/static"
             echo "➕ Including .next/static in bundle"
@@ -115,7 +120,7 @@ jobs:
             [ -f "$TGZ" ] || TGZ="$(ls -t releases/*.tgz | head -1)"
 
             # Clean previous runtime (keep .env.cpanel and tmp/)
-            rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public || true
+            rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public packages/prisma || true
 
             # Extract new runtime bundle to app dir
             tar -xzf "$TGZ" -C .
