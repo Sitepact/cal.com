@@ -10,6 +10,7 @@ datasource db {
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["views"]
+  binaryTargets = ["native", "debian-openssl-3.0.x", "rhel-openssl-1.1.x"]
 }
 
 generator zod {
