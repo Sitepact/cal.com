@@ -42,6 +42,13 @@ jobs:
             --filter=@calcom/web^... \
             --concurrency=1
 
+      - name: Verify build outputs
+        run: |
+          test -f apps/web/.next/standalone/apps/web/server.js || {
+            echo "❌ Missing standalone server.js"; exit 1;
+          }
+          echo "✅ Found standalone server.js"
+
       - name: Include Prisma engines for runtime
         run: |
           set -e
@@ -54,10 +61,14 @@ jobs:
 
       - name: Package runtime bundle
         run: |
-          tar -czf calcom-standalone-${{ github.sha }}.tgz \
-            apps/web/.next/standalone \
-            apps/web/.next/static \
-            apps/web/public
+          FILES="apps/web/.next/standalone apps/web/public"
+          if [ -d "apps/web/.next/static" ]; then
+            FILES="$FILES apps/web/.next/static"
+            echo "➕ Including .next/static in bundle"
+          else
+            echo "ℹ️ No .next/static directory found — skipping"
+          fi
+          tar -czf "calcom-standalone-${{ github.sha }}.tgz" $FILES
 
       - name: Add server to known_hosts
         run: |
