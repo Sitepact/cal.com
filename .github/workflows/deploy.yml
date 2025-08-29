@@ -35,9 +35,12 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      - name: Build (standalone)
+      - name: Build (standalone, low parallelism)
         run: |
-          node .yarn/releases/yarn-3.4.1.cjs build -- --concurrency=1
+          # Build only web and its deps; keep Turbo concurrency low to avoid OOM
+          node .yarn/releases/yarn-3.4.1.cjs turbo run build \
+            --filter=@calcom/web^... \
+            --concurrency=1
 
       - name: Include Prisma engines for runtime
         run: |
