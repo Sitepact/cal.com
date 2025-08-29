@@ -147,11 +147,34 @@ jobs:
             }
             EOF
 
-            # Load server-only env for Prisma migrations (kept off-git)
-            set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
-
-            # Run DB migrations (uses DATABASE_DIRECT_URL)
-            /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy --schema packages/prisma/schema.prisma
+            # --- Load server-only env (robustly) ---
+            if [ -f ".env.cpanel" ]; then
+              # normalize (remove CRLF & possible UTF-8 BOM), then source
+              awk 'NR==1{sub(/^\xef\xbb\xbf/,"")}1' .env.cpanel | tr -d '\r' > .env.ci
+              set -a
+              . .env.ci
+              set +a
+              rm -f .env.ci
+            fi
+            
+            # Prisma needs DATABASE_URL. If it’s missing but we have a direct URL, reuse it.
+            if [ -z "${DATABASE_URL:-}" ] && [ -n "${DATABASE_DIRECT_URL:-}" ]; then
+              export DATABASE_URL="${DATABASE_DIRECT_URL}"
+            fi
+            
+            # Provide both spellings for the direct URL (schema may use DIRECT_URL)
+            if [ -z "${DIRECT_URL:-}" ] && [ -n "${DATABASE_DIRECT_URL:-}" ]; then
+              export DIRECT_URL="${DATABASE_DIRECT_URL}"
+            fi
+            if [ -z "${DATABASE_DIRECT_URL:-}" ] && [ -n "${DIRECT_URL:-}" ]; then
+              export DATABASE_DIRECT_URL="${DIRECT_URL}"
+            fi
+            
+            echo "Env check (masked):"
+            ( env | grep -E 'DATABASE_URL=|DIRECT_URL=|DATABASE_DIRECT_URL=' ) || true
+            
+            # Run DB migrations (uses DATABASE_URL and/or DIRECT_URL via schema.prisma)
+             /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy --schema packages/prisma/schema.prisma
 
             # Restart Passenger
             touch tmp/restart.txt
