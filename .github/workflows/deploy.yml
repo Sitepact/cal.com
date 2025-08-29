@@ -35,12 +35,16 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      - name: Build (standalone, low parallelism)
+      - name: Build deps with Turbo (low parallelism)
         run: |
-          # Build only web and its deps; keep Turbo concurrency low to avoid OOM
           node .yarn/releases/yarn-3.4.1.cjs turbo run build \
             --filter=@calcom/web^... \
             --concurrency=1
+
+      - name: Next build (apps/web)
+        run: |
+          # Run Next directly to ensure .next/standalone is produced
+          node apps/web/node_modules/.bin/next build apps/web
 
       - name: Verify build outputs
         run: |
@@ -118,17 +122,15 @@ jobs:
             tar -xzf "$TGZ" -C .
             rm -f "$TGZ"
 
-            # Recreate app.js that runs the prebuilt server (try both common paths)
+            # Recreate app.js that runs the prebuilt server (try both paths)
             cat > app.js <<'EOF'
             // app.js — run the prebuilt standalone Next.js server
             const path = require('path');
             process.env.PORT = process.env.PORT || '3000'; // Passenger sets this
-
             const candidates = [
               path.join(__dirname, 'apps/web/.next/standalone/server.js'),
               path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'),
             ];
-
             let started = false, lastErr;
             for (const p of candidates) {
               try { require(p); started = true; break; }
