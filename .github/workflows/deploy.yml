@@ -3,6 +3,8 @@ name: Build & Deploy Cal.com to cPanel
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/seed-app-store.yml'
   workflow_dispatch:
 
 jobs:
