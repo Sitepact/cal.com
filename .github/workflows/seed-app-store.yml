@@ -18,6 +18,7 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set nodeLinker node-modules
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
+      # Optional: generate to ensure client + generators are ready
       - name: Generate Prisma Client
         working-directory: packages/prisma
         run: npx prisma generate --schema schema.prisma
@@ -25,11 +26,15 @@ jobs:
       - name: Run migrations (direct 5432)
         working-directory: packages/prisma
         env:
-          DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_URL }}   # <- add this repo secret
+          # Use your direct (5432) URL with sslmode=require
+          DATABASE_URL:           ${{ secrets.SUPABASE_DIRECT_URL }}
+          DATABASE_DIRECT_URL:    ${{ secrets.SUPABASE_DIRECT_URL }}
+          DIRECT_URL:             ${{ secrets.SUPABASE_DIRECT_URL }}
         run: npx prisma migrate deploy --schema schema.prisma
 
-      - name: Seed App Store
+      - name: Seed App Store (Google, etc.)
         env:
-          DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
-        run: |
-          node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/prisma db-seed
+          DATABASE_URL:           ${{ secrets.SUPABASE_DIRECT_URL }}
+          DATABASE_DIRECT_URL:    ${{ secrets.SUPABASE_DIRECT_URL }}
+          DIRECT_URL:             ${{ secrets.SUPABASE_DIRECT_URL }}
+        run: node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/prisma db-seed
