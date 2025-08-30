@@ -138,13 +138,38 @@ jobs:
 
             # Recreate app.js that runs the prebuilt server (try both paths)
             cat > app.js <<'EOF'
-            // app.js — run the prebuilt standalone Next.js server
+            // app.js — start prebuilt Next server and hydrate env from .env.cpanel
+            const fs = require('fs');
             const path = require('path');
-            process.env.PORT = process.env.PORT || '3000'; // Passenger sets this
+            
+            // Load .env.cpanel (strip BOM/CRLF) and merge into process.env
+            (function loadEnv() {
+              const p = path.join(__dirname, '.env.cpanel');
+              if (!fs.existsSync(p)) return;
+              let txt = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '');
+              txt.split(/\r?\n/).forEach((line) => {
+                const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+                if (!m) return;
+                const k = m[1];
+                let v = m[2];
+                if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+                if (process.env[k] === undefined) process.env[k] = v;
+              });
+              // helpful aliases for Prisma
+              if (!process.env.DIRECT_URL && process.env.DATABASE_DIRECT_URL)
+                process.env.DIRECT_URL = process.env.DATABASE_DIRECT_URL;
+              if (!process.env.DATABASE_URL && process.env.DATABASE_DIRECT_URL)
+                process.env.DATABASE_URL = process.env.DATABASE_DIRECT_URL;
+            })();
+            
+            process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+            process.env.PORT = process.env.PORT || '3000';
+            
             const candidates = [
               path.join(__dirname, 'apps/web/.next/standalone/server.js'),
               path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'),
             ];
+            
             let started = false, lastErr;
             for (const p of candidates) {
               try { require(p); started = true; break; }
