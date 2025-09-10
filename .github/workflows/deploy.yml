@@ -11,13 +11,10 @@ jobs:
   build-deploy:
     runs-on: ubuntu-latest
     env:
-      # Required by next.config.js
       BUILD_STANDALONE: "true"
       NEXTAUTH_URL: "https://cal.sitepact.com"
       NEXTAUTH_SECRET: ${{ secrets.BUILD_NEXTAUTH_SECRET }}
       CALENDSO_ENCRYPTION_KEY: ${{ secrets.BUILD_CALENDSO_ENCRYPTION_KEY }}
-
-      # Optional public vars
       NEXT_PUBLIC_WEBAPP_URL: ${{ vars.NEXT_PUBLIC_WEBAPP_URL || 'https://cal.sitepact.com' }}
       NEXT_TELEMETRY_DISABLED: 1
       NODE_OPTIONS: --max-old-space-size=6144
@@ -37,26 +34,25 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      # --- Prisma client generation with all needed binary targets ---
-      - name: Generate Prisma Client (include RHEL OpenSSL 3)
+      # Prisma generate now reads binaryTargets from packages/prisma/schema.prisma
+      - name: Generate Prisma Client (download engines listed in schema)
         working-directory: packages/prisma
         env:
-          # Ensure the correct engines are downloaded at generate time
-          PRISMA_CLI_BINARY_TARGETS: debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x
           PRISMA_GENERATE_DATAPROXY: "false"
-        run: |
-          npx prisma generate --schema schema.prisma
+        run: npx prisma generate --schema schema.prisma
 
       - name: Verify Prisma engines (rhel-openssl-3.0.x must exist)
         run: |
           set -e
-          echo "Listing Prisma client engines:"
+          echo "Listing Prisma client directory:"
           ls -lah node_modules/.prisma/client || true
-          if ls node_modules/.prisma/client/*rhel-openssl-3.0.x* 1>/dev/null 2>&1; then
+          if ls node_modules/.prisma/client/*rhel-openssl-3.0.x* 1>/dev/null 2>&1 || \
+             (ls node_modules/.prisma/client/*query* 2>/dev/null | grep -q 'rhel-openssl-3.0.x'); then
             echo "✅ rhel-openssl-3.0.x engine present"
           else
             echo "❌ Missing rhel-openssl-3.0.x engine in node_modules/.prisma/client"
-            echo "   Make sure PRISMA_CLI_BINARY_TARGETS includes rhel-openssl-3.0.x"
+            echo "   Ensure 'binaryTargets' in packages/prisma/schema.prisma includes:"
+            echo "   [\"native\", \"debian-openssl-3.0.x\", \"rhel-openssl-1.1.x\", \"rhel-openssl-3.0.x\"]"
             exit 1
           fi
 
@@ -80,7 +76,6 @@ jobs:
             echo "✅ Found $B"
           else
             echo "❌ Missing standalone server.js in both expected locations."
-            echo "🔎 Listing possible matches under apps/web/.next:"
             find apps/web/.next -maxdepth 5 -type f -name 'server.js' -print || true
             exit 1
           fi
@@ -97,13 +92,11 @@ jobs:
             rsync -a "$ROOT_PRISMA/" "$STANDALONE/node_modules/.prisma/"
           fi
 
-      # ------------------- Run migrations in CI -------------------
       - name: Run Prisma migrations in CI (uses direct 5432 URL)
         env:
           DATABASE_DIRECT_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
           DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
         run: npx prisma@5.4.2 migrate deploy --schema packages/prisma/schema.prisma
-      # ------------------------------------------------------------
 
       - name: Package runtime bundle
         run: |
@@ -146,14 +139,10 @@ jobs:
             TGZ="releases/calcom-standalone-${{ github.sha }}.tgz"
             [ -f "$TGZ" ] || TGZ="$(ls -t releases/*.tgz | head -1)"
 
-            # Clean previous runtime (keep .env.cpanel and tmp/)
             rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public packages/prisma || true
-
-            # Extract new runtime bundle
             tar -xzf "$TGZ" -C .
             rm -f "$TGZ"
 
-            # app.js to boot the prebuilt server
             cat > app.js <<'EOF'
             // app.js — start prebuilt Next server; also read .env.cpanel
             const fs = require('fs');
@@ -197,5 +186,4 @@ jobs:
             }
             EOF
 
-            # Restart Passenger
             touch tmp/restart.txt
