@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
 
-      # === Prisma: generate from apps/web and force engines for both build (Debian) and runtime (RHEL 9 OpenSSL 3) ===
+      # === Prisma: generate from apps/web and force both build & runtime targets ===
       - name: Prisma generate for Debian (build host)
         working-directory: apps/web
         env:
@@ -63,38 +63,52 @@ jobs:
           PRISMA_CLI_BINARY_TARGETS: "rhel-openssl-3.0.x"
         run: npx prisma@5.4.2 generate --schema ../../packages/prisma/schema.prisma
 
-      - name: Verify Prisma engines (look for any .node engine file)
+      - name: Verify Prisma engines (check @prisma/engines and .prisma/client)
         run: |
           set -e
-          CANDIDATES=(
-            "apps/web/node_modules/.prisma/client"
-            "packages/prisma/node_modules/.prisma/client"
-            "node_modules/.prisma/client"
-          )
-          FOUND_DIR=""
-          for D in "${CANDIDATES[@]}"; do
+          ENGINES_DIR=""
+          for D in "apps/web/node_modules/@prisma/engines" "node_modules/@prisma/engines"; do
             if [ -d "$D" ]; then
               echo "Checking $D"
               ls -lah "$D" || true
-              if compgen -G "$D/*query_engine*.node" > /dev/null; then
-                echo "✅ Found Prisma engine binary in $D"
-                FOUND_DIR="$D"
+              if compgen -G "$D/*query_engine*node" > /dev/null; then
+                ENGINES_DIR="$D"
                 break
               fi
             fi
           done
-          if [ -z "$FOUND_DIR" ]; then
-            echo "❌ No Prisma engine .node file found under known locations."
-            echo "   Dumping hints:"
-            echo "   - apps/web/.prisma/client schema targets:"
-            test -f apps/web/node_modules/.prisma/client/schema.prisma && \
-              grep -n 'binaryTargets' -n app*/node_modules/.prisma/client/schema.prisma || true
-            echo "   - root .prisma/client schema targets:"
-            test -f node_modules/.prisma/client/schema.prisma && \
-              grep -n 'binaryTargets' -n node_modules/.prisma/client/schema.prisma || true
+          if [ -z "$ENGINES_DIR" ]; then
+            echo "❌ No Prisma engine .node file found under node_modules/@prisma/engines"
+            echo "   Contents to help debug:"
+            ls -lah node_modules/@prisma 2>/dev/null || true
+            ls -lah apps/web/node_modules/@prisma 2>/dev/null || true
             exit 1
           fi
-          echo "$FOUND_DIR" > .prisma_engine_dir
+
+          # Soft check for RHEL OpenSSL 3
+          if compgen -G "$ENGINES_DIR/*rhel-openssl-3.0.x*.node" > /dev/null; then
+            echo "✅ RHEL OpenSSL 3 engine present in $ENGINES_DIR"
+          else
+            echo "⚠️ RHEL OpenSSL 3 engine not found by name in $ENGINES_DIR"
+            echo "   (If your Prisma version uses hashed filenames, we'll still copy all engines.)"
+          fi
+
+          CLIENT_DIR=""
+          for D in "apps/web/node_modules/.prisma/client" "node_modules/.prisma/client"; do
+            if [ -d "$D" ]; then
+              CLIENT_DIR="$D"
+              break
+            fi
+          done
+          if [ -z "$CLIENT_DIR" ]; then
+            echo "❌ Couldn't locate .prisma/client; required for schema + client runtime."
+            exit 1
+          fi
+
+          echo "$ENGINES_DIR" > .prisma_engines_dir
+          echo "$CLIENT_DIR"  > .prisma_client_dir
+          echo "Engines dir: $(cat .prisma_engines_dir)"
+          echo "Client dir : $(cat .prisma_client_dir)"
 
       - name: Build deps with Turbo (low parallelism)
         run: |
@@ -125,12 +139,19 @@ jobs:
       - name: Include Prisma engines for runtime (copy into standalone)
         run: |
           set -e
-          ENGINE_DIR="$(cat .prisma_engine_dir)"
+          ENGINES_DIR="$(cat .prisma_engines_dir)"
+          CLIENT_DIR="$(cat .prisma_client_dir)"
           STANDALONE="apps/web/.next/standalone"
+
+          # Copy Node-API engines (required at runtime)
+          mkdir -p "$STANDALONE/node_modules/@prisma/engines"
+          rsync -a "$ENGINES_DIR/" "$STANDALONE/node_modules/@prisma/engines/"
+          echo "✅ Copied engines from: $ENGINES_DIR"
+
+          # Copy client artifacts (.prisma/client)
           mkdir -p "$STANDALONE/node_modules/.prisma/client"
-          # Copy the entire client artifacts (includes engine .node, schema, etc.)
-          rsync -a "$ENGINE_DIR/" "$STANDALONE/node_modules/.prisma/client/"
-          echo "Prisma engines copied from: $ENGINE_DIR"
+          rsync -a "$CLIENT_DIR/" "$STANDALONE/node_modules/.prisma/client/"
+          echo "✅ Copied client from: $CLIENT_DIR"
 
       - name: Run Prisma migrations in CI (uses direct 5432 URL)
         env:
