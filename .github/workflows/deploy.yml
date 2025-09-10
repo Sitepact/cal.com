@@ -34,7 +34,7 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      # ---- Fix for custom Prisma generator: make enum-generator.ts visible from apps/web ----
+      # ---- Make custom Prisma generator resolvable from apps/web ----
       - name: Symlink enum-generator.ts into apps/web
         run: |
           set -e
@@ -46,16 +46,24 @@ jobs:
             exit 1
           fi
 
-      # === Prisma: generate from apps/web so client lands in the right workspace ===
-      # Uses binaryTargets from packages/prisma/schema.prisma (no PRISMA_CLI_BINARY_TARGETS env).
-      - name: Generate Prisma Client (apps/web)
+      # === Prisma: generate from apps/web and force engines for both build (Debian) and runtime (RHEL 9 OpenSSL 3) ===
+      - name: Prisma generate for Debian (build host)
         working-directory: apps/web
         env:
           PRISMA_GENERATE_DATAPROXY: "false"
           PRISMA_CLIENT_ENGINE_TYPE: "library"
+          PRISMA_CLI_BINARY_TARGETS: "debian-openssl-3.0.x"
         run: npx prisma@5.4.2 generate --schema ../../packages/prisma/schema.prisma
 
-      - name: Verify Prisma engines (search all workspaces)
+      - name: Prisma generate for RHEL OpenSSL 3 (runtime host)
+        working-directory: apps/web
+        env:
+          PRISMA_GENERATE_DATAPROXY: "false"
+          PRISMA_CLIENT_ENGINE_TYPE: "library"
+          PRISMA_CLI_BINARY_TARGETS: "rhel-openssl-3.0.x"
+        run: npx prisma@5.4.2 generate --schema ../../packages/prisma/schema.prisma
+
+      - name: Verify Prisma engines (look for any .node engine file)
         run: |
           set -e
           CANDIDATES=(
@@ -63,24 +71,30 @@ jobs:
             "packages/prisma/node_modules/.prisma/client"
             "node_modules/.prisma/client"
           )
-          FOUND=""
+          FOUND_DIR=""
           for D in "${CANDIDATES[@]}"; do
             if [ -d "$D" ]; then
               echo "Checking $D"
               ls -lah "$D" || true
-              if ls "$D"/*query* 2>/dev/null | grep -q 'rhel-openssl-3.0.x'; then
-                echo "✅ Found rhel-openssl-3.0.x engine in $D"
-                FOUND="$D"
+              if compgen -G "$D/*query_engine*.node" > /dev/null; then
+                echo "✅ Found Prisma engine binary in $D"
+                FOUND_DIR="$D"
                 break
               fi
             fi
           done
-          if [ -z "$FOUND" ]; then
-            echo "❌ Missing rhel-openssl-3.0.x engine in any known location."
-            echo "   Ensure binaryTargets include: [\"debian-openssl-3.0.x\",\"rhel-openssl-1.1.x\",\"rhel-openssl-3.0.x\"]"
+          if [ -z "$FOUND_DIR" ]; then
+            echo "❌ No Prisma engine .node file found under known locations."
+            echo "   Dumping hints:"
+            echo "   - apps/web/.prisma/client schema targets:"
+            test -f apps/web/node_modules/.prisma/client/schema.prisma && \
+              grep -n 'binaryTargets' -n app*/node_modules/.prisma/client/schema.prisma || true
+            echo "   - root .prisma/client schema targets:"
+            test -f node_modules/.prisma/client/schema.prisma && \
+              grep -n 'binaryTargets' -n node_modules/.prisma/client/schema.prisma || true
             exit 1
           fi
-          echo "$FOUND" > .prisma_engine_dir
+          echo "$FOUND_DIR" > .prisma_engine_dir
 
       - name: Build deps with Turbo (low parallelism)
         run: |
@@ -114,6 +128,7 @@ jobs:
           ENGINE_DIR="$(cat .prisma_engine_dir)"
           STANDALONE="apps/web/.next/standalone"
           mkdir -p "$STANDALONE/node_modules/.prisma/client"
+          # Copy the entire client artifacts (includes engine .node, schema, etc.)
           rsync -a "$ENGINE_DIR/" "$STANDALONE/node_modules/.prisma/client/"
           echo "Prisma engines copied from: $ENGINE_DIR"
 
