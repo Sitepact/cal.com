@@ -34,8 +34,20 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      # === Prisma: generate where @prisma/client lives (apps/web) ===
-      # Uses binaryTargets from packages/prisma/schema.prisma
+      # ---- Fix for custom Prisma generator: make enum-generator.ts visible from apps/web ----
+      - name: Symlink enum-generator.ts into apps/web
+        run: |
+          set -e
+          if [ -f packages/prisma/enum-generator.ts ]; then
+            ln -sf ../../packages/prisma/enum-generator.ts apps/web/enum-generator.ts
+            echo "✅ Symlinked packages/prisma/enum-generator.ts -> apps/web/enum-generator.ts"
+          else
+            echo "❌ packages/prisma/enum-generator.ts not found. Adjust path or commit the file."
+            exit 1
+          fi
+
+      # === Prisma: generate from apps/web so client lands in the right workspace ===
+      # Uses binaryTargets from packages/prisma/schema.prisma (no PRISMA_CLI_BINARY_TARGETS env).
       - name: Generate Prisma Client (apps/web)
         working-directory: apps/web
         env:
@@ -65,7 +77,7 @@ jobs:
           done
           if [ -z "$FOUND" ]; then
             echo "❌ Missing rhel-openssl-3.0.x engine in any known location."
-            echo "   Ensure binaryTargets include: [\"native\",\"debian-openssl-3.0.x\",\"rhel-openssl-1.1.x\",\"rhel-openssl-3.0.x\"]"
+            echo "   Ensure binaryTargets include: [\"debian-openssl-3.0.x\",\"rhel-openssl-1.1.x\",\"rhel-openssl-3.0.x\"]"
             exit 1
           fi
           echo "$FOUND" > .prisma_engine_dir
