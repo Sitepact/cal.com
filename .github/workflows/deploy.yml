@@ -42,7 +42,7 @@ jobs:
         working-directory: packages/prisma
         env:
           # Ensure the correct engines are downloaded at generate time
-          PRISMA_CLI_BINARY_TARGETS: native,debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x
+          PRISMA_CLI_BINARY_TARGETS: debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x
           PRISMA_GENERATE_DATAPROXY: "false"
         run: |
           npx prisma generate --schema schema.prisma
