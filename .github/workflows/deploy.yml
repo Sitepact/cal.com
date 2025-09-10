@@ -48,12 +48,12 @@ jobs:
             /^generator[[:space:]]+client[[:space:]]*\{/ {inGen=1}
             {line=$0}
             inGen && $0 ~ /^[[:space:]]*binaryTargets[[:space:]]*=/ {
-              sub(/binaryTargets[[:space:]]*=.*/, "binaryTargets = [\"native\", \"rhel-openssl-3.0.x\", \"debian-openssl-3.0.x\"]", line)
+              sub(/binaryTargets[[:space:]]*=.*/, "binaryTargets = [\"rhel-openssl-3.0.x\", \"debian-openssl-3.0.x\"]", line)
               done=1
             }
             print line
             inGen && $0 ~ /^[[:space:]]*\}/ {
-              if (!done) print "  binaryTargets = [\"native\", \"rhel-openssl-3.0.x\", \"debian-openssl-3.0.x\"]"
+              if (!done) print "  binaryTargets = [\"rhel-openssl-3.0.x\", \"debian-openssl-3.0.x\"]"
               inGen=0
             }
           ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -62,7 +62,7 @@ jobs:
       - name: Generate Prisma Client (with RHEL OpenSSL 3 engine)
         working-directory: packages/prisma
         env:
-          PRISMA_CLI_BINARY_TARGETS: native,rhel-openssl-3.0.x,debian-openssl-3.0.x
+          PRISMA_CLI_BINARY_TARGETS: rhel-openssl-3.0.x,debian-openssl-3.0.x
         run: |
           npx prisma generate --schema schema.prisma
 
