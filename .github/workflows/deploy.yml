@@ -34,13 +34,13 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      # === Prisma: generate where @prisma/client lives (apps/web), targeting OpenSSL 3 (AlmaLinux 9) ===
-      - name: Generate Prisma Client (apps/web, OpenSSL 3 targets)
+      # === Prisma: generate where @prisma/client lives (apps/web) ===
+      # Uses binaryTargets from packages/prisma/schema.prisma
+      - name: Generate Prisma Client (apps/web)
         working-directory: apps/web
         env:
           PRISMA_GENERATE_DATAPROXY: "false"
           PRISMA_CLIENT_ENGINE_TYPE: "library"
-          PRISMA_CLI_BINARY_TARGETS: "native,debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x"
         run: npx prisma@5.4.2 generate --schema ../../packages/prisma/schema.prisma
 
       - name: Verify Prisma engines (search all workspaces)
