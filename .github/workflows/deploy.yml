@@ -34,27 +34,41 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      # Prisma generate now reads binaryTargets from packages/prisma/schema.prisma
-      - name: Generate Prisma Client (download engines listed in schema)
-        working-directory: packages/prisma
+      # === Prisma: generate where @prisma/client lives (apps/web), targeting OpenSSL 3 (AlmaLinux 9) ===
+      - name: Generate Prisma Client (apps/web, OpenSSL 3 targets)
+        working-directory: apps/web
         env:
           PRISMA_GENERATE_DATAPROXY: "false"
-        run: npx prisma generate --schema schema.prisma
+          PRISMA_CLIENT_ENGINE_TYPE: "library"
+          PRISMA_CLI_BINARY_TARGETS: "native,debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x"
+        run: npx prisma@5.4.2 generate --schema ../../packages/prisma/schema.prisma
 
-      - name: Verify Prisma engines (rhel-openssl-3.0.x must exist)
+      - name: Verify Prisma engines (search all workspaces)
         run: |
           set -e
-          echo "Listing Prisma client directory:"
-          ls -lah node_modules/.prisma/client || true
-          if ls node_modules/.prisma/client/*rhel-openssl-3.0.x* 1>/dev/null 2>&1 || \
-             (ls node_modules/.prisma/client/*query* 2>/dev/null | grep -q 'rhel-openssl-3.0.x'); then
-            echo "✅ rhel-openssl-3.0.x engine present"
-          else
-            echo "❌ Missing rhel-openssl-3.0.x engine in node_modules/.prisma/client"
-            echo "   Ensure 'binaryTargets' in packages/prisma/schema.prisma includes:"
-            echo "   [\"native\", \"debian-openssl-3.0.x\", \"rhel-openssl-1.1.x\", \"rhel-openssl-3.0.x\"]"
+          CANDIDATES=(
+            "apps/web/node_modules/.prisma/client"
+            "packages/prisma/node_modules/.prisma/client"
+            "node_modules/.prisma/client"
+          )
+          FOUND=""
+          for D in "${CANDIDATES[@]}"; do
+            if [ -d "$D" ]; then
+              echo "Checking $D"
+              ls -lah "$D" || true
+              if ls "$D"/*query* 2>/dev/null | grep -q 'rhel-openssl-3.0.x'; then
+                echo "✅ Found rhel-openssl-3.0.x engine in $D"
+                FOUND="$D"
+                break
+              fi
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            echo "❌ Missing rhel-openssl-3.0.x engine in any known location."
+            echo "   Ensure binaryTargets include: [\"native\",\"debian-openssl-3.0.x\",\"rhel-openssl-1.1.x\",\"rhel-openssl-3.0.x\"]"
             exit 1
           fi
+          echo "$FOUND" > .prisma_engine_dir
 
       - name: Build deps with Turbo (low parallelism)
         run: |
@@ -82,15 +96,14 @@ jobs:
           test -f packages/prisma/schema.prisma || { echo "❌ Missing packages/prisma/schema.prisma"; exit 1; }
           echo "✅ Found packages/prisma/schema.prisma"
 
-      - name: Include Prisma engines for runtime
+      - name: Include Prisma engines for runtime (copy into standalone)
         run: |
           set -e
-          ROOT_PRISMA="node_modules/.prisma"
+          ENGINE_DIR="$(cat .prisma_engine_dir)"
           STANDALONE="apps/web/.next/standalone"
-          if [ -d "$ROOT_PRISMA" ]; then
-            mkdir -p "$STANDALONE/node_modules/.prisma"
-            rsync -a "$ROOT_PRISMA/" "$STANDALONE/node_modules/.prisma/"
-          fi
+          mkdir -p "$STANDALONE/node_modules/.prisma/client"
+          rsync -a "$ENGINE_DIR/" "$STANDALONE/node_modules/.prisma/client/"
+          echo "Prisma engines copied from: $ENGINE_DIR"
 
       - name: Run Prisma migrations in CI (uses direct 5432 URL)
         env:
