@@ -1,0 +1,215 @@
+name: Build & Deploy Cal.com to cPanel
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/seed-app-store.yml'
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Required by your next.config.js
+      BUILD_STANDALONE: "true"
+      NEXTAUTH_URL: "https://cal.sitepact.com"
+      NEXTAUTH_SECRET: ${{ secrets.BUILD_NEXTAUTH_SECRET }}
+      CALENDSO_ENCRYPTION_KEY: ${{ secrets.BUILD_CALENDSO_ENCRYPTION_KEY }}
+
+      # Optional public vars
+      NEXT_PUBLIC_WEBAPP_URL: ${{ vars.NEXT_PUBLIC_WEBAPP_URL || 'https://cal.sitepact.com' }}
+      NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max-old-space-size=6144
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 18 for build
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (vendored Yarn)
+        run: |
+          node .yarn/releases/yarn-3.4.1.cjs config set nodeLinker node-modules
+          node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
+          node .yarn/releases/yarn-3.4.1.cjs install --immutable
+
+      - name: Generate Prisma Client (include RHEL engine)
+        working-directory: packages/prisma
+        env:
+          # ensure both engines are downloaded
+          PRISMA_CLI_BINARY_TARGETS: debian-openssl-3.0.x,rhel-openssl-1.1.x
+        run: |
+          npx prisma generate --schema schema.prisma
+
+      - name: Build deps with Turbo (low parallelism)
+        run: |
+          node .yarn/releases/yarn-3.4.1.cjs turbo run build \
+            --filter=@calcom/web^... \
+            --concurrency=1
+
+      - name: Next build (apps/web)
+        run: |
+          node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/web build
+
+      - name: Verify build outputs
+        run: |
+          set -e
+          A="apps/web/.next/standalone/server.js"
+          B="apps/web/.next/standalone/apps/web/server.js"
+          if [ -f "$A" ]; then
+            echo "✅ Found $A"
+          elif [ -f "$B" ]; then
+            echo "✅ Found $B"
+          else
+            echo "❌ Missing standalone server.js in both expected locations."
+            echo "🔎 Listing possible matches under apps/web/.next:"
+            find apps/web/.next -maxdepth 5 -type f -name 'server.js' -print || true
+            exit 1
+          fi
+          # Also ensure Prisma schema exists before packaging
+          test -f packages/prisma/schema.prisma || {
+            echo "❌ Missing packages/prisma/schema.prisma (needed for migrations)"; exit 1;
+          }
+          echo "✅ Found packages/prisma/schema.prisma"
+
+      - name: Include Prisma engines for runtime
+        run: |
+          set -e
+          ROOT_PRISMA="node_modules/.prisma"
+          STANDALONE="apps/web/.next/standalone"
+          if [ -d "$ROOT_PRISMA" ]; then
+            mkdir -p "$STANDALONE/node_modules/.prisma"
+            rsync -a "$ROOT_PRISMA/" "$STANDALONE/node_modules/.prisma/"
+          fi
+
+      - name: Package runtime bundle
+        run: |
+          FILES="apps/web/.next/standalone apps/web/public packages/prisma"
+          if [ -d "apps/web/.next/static" ]; then
+            FILES="$FILES apps/web/.next/static"
+            echo "➕ Including .next/static in bundle"
+          else
+            echo "ℹ️ No .next/static directory found — skipping"
+          fi
+          tar -czf "calcom-standalone-${{ github.sha }}.tgz" $FILES
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          port:     ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key:      ${{ secrets.SSH_KEY }}
+          source:   "calcom-standalone-${{ github.sha }}.tgz"
+          target:   "${{ secrets.APP_DIR }}/releases"
+
+      - name: Activate release, write app.js, migrate, restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          port:     ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key:      ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            APP_DIR="${{ secrets.APP_DIR }}"
+            cd "$APP_DIR"
+
+            mkdir -p releases tmp
+
+            TGZ="releases/calcom-standalone-${{ github.sha }}.tgz"
+            [ -f "$TGZ" ] || TGZ="$(ls -t releases/*.tgz | head -1)"
+
+            # Clean previous runtime (keep .env.cpanel and tmp/)
+            rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public packages/prisma || true
+
+            # Extract new runtime bundle to app dir
+            tar -xzf "$TGZ" -C .
+            rm -f "$TGZ"
+
+            # Recreate app.js that runs the prebuilt server (try both paths)
+            cat > app.js <<'EOF'
+            // app.js — start prebuilt Next server and hydrate env from .env.cpanel
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Load .env.cpanel (strip BOM/CRLF) and merge into process.env
+            (function loadEnv() {
+              const p = path.join(__dirname, '.env.cpanel');
+              if (!fs.existsSync(p)) return;
+              let txt = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '');
+              txt.split(/\r?\n/).forEach((line) => {
+                const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+                if (!m) return;
+                const k = m[1];
+                let v = m[2];
+                if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+                if (process.env[k] === undefined) process.env[k] = v;
+              });
+              // helpful aliases for Prisma
+              if (!process.env.DIRECT_URL && process.env.DATABASE_DIRECT_URL)
+                process.env.DIRECT_URL = process.env.DATABASE_DIRECT_URL;
+              if (!process.env.DATABASE_URL && process.env.DATABASE_DIRECT_URL)
+                process.env.DATABASE_URL = process.env.DATABASE_DIRECT_URL;
+            })();
+            
+            process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+            process.env.PORT = process.env.PORT || '3000';
+            
+            const candidates = [
+              path.join(__dirname, 'apps/web/.next/standalone/server.js'),
+              path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'),
+            ];
+            
+            let started = false, lastErr;
+            for (const p of candidates) {
+              try { require(p); started = true; break; }
+              catch (e) { lastErr = e; }
+            }
+            if (!started) {
+              console.error('Could not find standalone server.js in expected locations.');
+              if (lastErr) console.error(lastErr);
+              process.exit(1);
+            }
+            EOF
+
+            # --- Load server-only env (robustly) ---
+            if [ -f ".env.cpanel" ]; then
+              # normalize (remove CRLF & possible UTF-8 BOM), then source
+              awk 'NR==1{sub(/^\xef\xbb\xbf/,"")}1' .env.cpanel | tr -d '\r' > .env.ci
+              set -a
+              . .env.ci
+              set +a
+              rm -f .env.ci
+            fi
+            
+            # Prisma needs DATABASE_URL. If it’s missing but we have a direct URL, reuse it.
+            if [ -z "${DATABASE_URL:-}" ] && [ -n "${DATABASE_DIRECT_URL:-}" ]; then
+              export DATABASE_URL="${DATABASE_DIRECT_URL}"
+            fi
+            
+            # Provide both spellings for the direct URL (schema may use DIRECT_URL)
+            if [ -z "${DIRECT_URL:-}" ] && [ -n "${DATABASE_DIRECT_URL:-}" ]; then
+              export DIRECT_URL="${DATABASE_DIRECT_URL}"
+            fi
+            if [ -z "${DATABASE_DIRECT_URL:-}" ] && [ -n "${DIRECT_URL:-}" ]; then
+              export DATABASE_DIRECT_URL="${DIRECT_URL}"
+            fi
+            
+            echo "Env check (masked):"
+            ( env | grep -E 'DATABASE_URL=|DIRECT_URL=|DATABASE_DIRECT_URL=' ) || true
+            
+            # Run DB migrations (uses DATABASE_URL and/or DIRECT_URL via schema.prisma)
+             /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy --schema packages/prisma/schema.prisma
+
+            # Restart Passenger
+            touch tmp/restart.txt

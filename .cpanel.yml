@@ -1,0 +1,21 @@
+---
+deployment:
+  tasks:
+    - cd /home/primary/public_html/cal.sitepact.com
+    - export NODE_OPTIONS="--max-old-space-size=4096"
+    # Load build-time env kept OFF-GIT
+    - set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
+
+    # Use vendored Yarn from .yarnrc.yml (adjust the version/path if yours is 3.4.1)
+    - node .yarn/releases/yarn-3.4.1.cjs install --immutable --inline-builds
+
+    # Prisma migrations (workspace script first; fallback to CLI)
+    - node .yarn/releases/yarn-3.4.1.cjs workspace @calcom/prisma db-deploy \
+        || npx prisma migrate deploy
+
+    # Build
+    - node .yarn/releases/yarn-3.4.1.cjs build
+
+    # Restart Passenger
+    - mkdir -p tmp
+    - touch tmp/restart.txt

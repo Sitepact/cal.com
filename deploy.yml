@@ -1,0 +1,112 @@
+name: Build & Deploy Cal.com to cPanel
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Required by your next.config.js
+      BUILD_STANDALONE: "true"
+      NEXTAUTH_URL: "https://cal.sitepact.com"
+      NEXTAUTH_SECRET: ${{ secrets.BUILD_NEXTAUTH_SECRET }}
+      CALENDSO_ENCRYPTION_KEY: ${{ secrets.BUILD_CALENDSO_ENCRYPTION_KEY }}
+
+      # Optional public vars
+      NEXT_PUBLIC_WEBAPP_URL: ${{ vars.NEXT_PUBLIC_WEBAPP_URL || 'https://cal.sitepact.com' }}
+      NEXT_TELEMETRY_DISABLED: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 18 for build
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (vendored Yarn)
+        run: |
+          node .yarn/releases/yarn-3.4.1.cjs config set nodeLinker node-modules
+          node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
+          node .yarn/releases/yarn-3.4.1.cjs install --immutable
+
+      - name: Build (standalone)
+        run: |
+          node .yarn/releases/yarn-3.4.1.cjs build
+
+      - name: Include Prisma engines for runtime
+        run: |
+          set -e
+          ROOT_PRISMA="node_modules/.prisma"
+          STANDALONE="apps/web/.next/standalone"
+          if [ -d "$ROOT_PRISMA" ]; then
+            mkdir -p "$STANDALONE/node_modules/.prisma"
+            rsync -a "$ROOT_PRISMA/" "$STANDALONE/node_modules/.prisma/"
+          fi
+
+      - name: Package runtime bundle
+        run: |
+          tar -czf calcom-standalone-${{ github.sha }}.tgz \
+            apps/web/.next/standalone \
+            apps/web/.next/static \
+            apps/web/public
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          port:     ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key:      ${{ secrets.SSH_KEY }}
+          source:   "calcom-standalone-${{ github.sha }}.tgz"
+          target:   "${{ secrets.APP_DIR }}/releases"
+
+      - name: Activate release, write app.js, migrate, restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          port:     ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key:      ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            APP_DIR="${{ secrets.APP_DIR }}"
+            cd "$APP_DIR"
+
+            mkdir -p releases tmp
+
+            TGZ="releases/calcom-standalone-${{ github.sha }}.tgz"
+            [ -f "$TGZ" ] || TGZ="$(ls -t releases/*.tgz | head -1)"
+
+            # Clean previous runtime (keep .env.cpanel and tmp/)
+            rm -rf apps/web/.next/standalone apps/web/.next/static apps/web/public || true
+
+            # Extract new runtime bundle to app dir
+            tar -xzf "$TGZ" -C .
+            rm -f "$TGZ"
+
+            # Recreate app.js that runs the prebuilt server
+            cat > app.js <<'EOF'
+            // app.js — run the prebuilt standalone Next.js server
+            const path = require('path');
+            process.env.PORT = process.env.PORT || '3000'; // Passenger sets this
+            require(path.join(__dirname, 'apps/web/.next/standalone/apps/web/server.js'));
+            EOF
+
+            # Load server-only env for Prisma migrations (kept off-git)
+            set -a; [ -f ".env.cpanel" ] && . ".env.cpanel"; set +a
+
+            # Run DB migrations (uses DATABASE_DIRECT_URL)
+            /opt/cpanel/ea-nodejs22/bin/npx prisma migrate deploy --schema packages/prisma/schema.prisma
+
+            # Restart Passenger
+            touch tmp/restart.txt
