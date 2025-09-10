@@ -37,11 +37,28 @@ jobs:
           node .yarn/releases/yarn-3.4.1.cjs config set networkConcurrency 2
           node .yarn/releases/yarn-3.4.1.cjs install --immutable
 
-      - name: Generate Prisma Client (include RHEL engine)
+      # --- Prisma client generation with all needed binary targets ---
+      - name: Generate Prisma Client (include RHEL OpenSSL 3)
         working-directory: packages/prisma
         env:
-          PRISMA_CLI_BINARY_TARGETS: debian-openssl-3.0.x,rhel-openssl-1.1.x
-        run: npx prisma generate --schema schema.prisma
+          # Ensure the correct engines are downloaded at generate time
+          PRISMA_CLI_BINARY_TARGETS: native,debian-openssl-3.0.x,rhel-openssl-1.1.x,rhel-openssl-3.0.x
+          PRISMA_GENERATE_DATAPROXY: "false"
+        run: |
+          npx prisma generate --schema schema.prisma
+
+      - name: Verify Prisma engines (rhel-openssl-3.0.x must exist)
+        run: |
+          set -e
+          echo "Listing Prisma client engines:"
+          ls -lah node_modules/.prisma/client || true
+          if ls node_modules/.prisma/client/*rhel-openssl-3.0.x* 1>/dev/null 2>&1; then
+            echo "✅ rhel-openssl-3.0.x engine present"
+          else
+            echo "❌ Missing rhel-openssl-3.0.x engine in node_modules/.prisma/client"
+            echo "   Make sure PRISMA_CLI_BINARY_TARGETS includes rhel-openssl-3.0.x"
+            exit 1
+          fi
 
       - name: Build deps with Turbo (low parallelism)
         run: |
@@ -80,13 +97,13 @@ jobs:
             rsync -a "$ROOT_PRISMA/" "$STANDALONE/node_modules/.prisma/"
           fi
 
-      # ------------------- NEW: run migrations in CI -------------------
+      # ------------------- Run migrations in CI -------------------
       - name: Run Prisma migrations in CI (uses direct 5432 URL)
         env:
           DATABASE_DIRECT_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
           DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
         run: npx prisma@5.4.2 migrate deploy --schema packages/prisma/schema.prisma
-      # -----------------------------------------------------------------
+      # ------------------------------------------------------------
 
       - name: Package runtime bundle
         run: |
