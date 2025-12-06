@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@calcom/prisma/client";
 
-import { getBookingAuditViewerService } from "@calcom/features/booking-audit/di/BookingAuditViewerService.container";
+import { getBookingAuditViewerService } from "@calcom/features/di/containers/BookingAuditViewerService.container";
 
 import type { TrpcSessionUser } from "../../../types";
 import type { TGetAuditLogsInputSchema } from "./getAuditLogs.schema";
@@ -19,10 +19,13 @@ export const getAuditLogsHandler = async ({ ctx, input }: GetAuditLogsOptions) =
 
     const bookingAuditViewerService = getBookingAuditViewerService();
 
+    // Get audit logs with full enrichment and formatting
+    // The viewer service handles linkedBookingUid support through the repository
     const result = await bookingAuditViewerService.getAuditLogsForBooking(
         bookingUid,
         user.id,
-        user.email
+        user.email,
+        user.locale ?? "en"
     );
 
     return result;

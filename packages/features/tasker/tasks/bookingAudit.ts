@@ -13,15 +13,13 @@ const log = logger.getSubLogger({ prefix: ["[tasker] bookingAudit"] });
  */
 export async function bookingAudit(payload: string, taskId?: string): Promise<void> {
     try {
-        if (!taskId) {
-            throw new Error("Task ID is required for booking audit consumer");
-        }
-        const parsedPayload: unknown = JSON.parse(payload);
+        // Parse JSON - schema validation happens in processAuditTask
+        const parsedPayload = JSON.parse(payload);
 
         log.info(`Processing booking audit: taskId=${taskId}`);
 
+        // Get BookingAuditTaskConsumer instance and delegate processing
         const bookingAuditTaskConsumer = getBookingAuditTaskConsumer();
-
         await bookingAuditTaskConsumer.processAuditTask(parsedPayload, taskId);
 
         log.info(`Successfully processed booking audit: taskId=${taskId}`);

@@ -1,5 +1,4 @@
-import { prisma } from "@calcom/prisma";
-import type { PrismaClient } from "@calcom/prisma";
+import db from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
 
 import { type TaskTypes } from "./tasker";
@@ -37,21 +36,15 @@ const makeWhereUpcomingTasks = (): Prisma.TaskWhereInput => ({
   },
 });
 
-type Dependencies = {
-  prismaClient: PrismaClient;
-};
-
-export class TaskRepository {
-  constructor(private readonly deps: Dependencies) { }
-
-  async create(
+export class Task {
+  static async create(
     type: TaskTypes,
     payload: string,
     options: { scheduledAt?: Date; maxAttempts?: number; referenceUid?: string } = {}
   ) {
     const { scheduledAt, maxAttempts, referenceUid } = options;
     console.info("Creating task", { type, payload, scheduledAt, maxAttempts });
-    const newTask = await this.deps.prismaClient.task.create({
+    const newTask = await db.task.create({
       data: {
         payload,
         type,
@@ -63,9 +56,9 @@ export class TaskRepository {
     return newTask.id;
   }
 
-  async getNextBatch() {
+  static async getNextBatch() {
     console.info("Getting next batch of tasks", makeWhereUpcomingTasks());
-    return this.deps.prismaClient.task.findMany({
+    return db.task.findMany({
       where: makeWhereUpcomingTasks(),
       orderBy: {
         scheduledAt: "asc",
@@ -74,41 +67,41 @@ export class TaskRepository {
     });
   }
 
-  async getFailed() {
-    return this.deps.prismaClient.task.findMany({
+  static async getFailed() {
+    return db.task.findMany({
       where: whereMaxAttemptsReached,
     });
   }
 
-  async getSucceeded() {
-    return this.deps.prismaClient.task.findMany({
+  static async getSucceeded() {
+    return db.task.findMany({
       where: whereSucceeded,
     });
   }
 
-  async count() {
-    return this.deps.prismaClient.task.count();
+  static async count() {
+    return db.task.count();
   }
 
-  async countUpcoming() {
-    return this.deps.prismaClient.task.count({
+  static async countUpcoming() {
+    return db.task.count({
       where: makeWhereUpcomingTasks(),
     });
   }
 
-  async countFailed() {
-    return this.deps.prismaClient.task.count({
+  static async countFailed() {
+    return db.task.count({
       where: whereMaxAttemptsReached,
     });
   }
 
-  async countSucceeded() {
-    return this.deps.prismaClient.task.count({
+  static async countSucceeded() {
+    return db.task.count({
       where: whereSucceeded,
     });
   }
 
-  async retry({
+  static async retry({
     taskId,
     lastError,
     minRetryIntervalMins,
@@ -122,7 +115,7 @@ export class TaskRepository {
       ? new Date(failedAttemptTime.getTime() + 1000 * 60 * minRetryIntervalMins)
       : undefined;
 
-    return this.deps.prismaClient.task.update({
+    return db.task.update({
       where: {
         id: taskId,
       },
@@ -137,8 +130,8 @@ export class TaskRepository {
     });
   }
 
-  async succeed(taskId: string) {
-    return this.deps.prismaClient.task.update({
+  static async succeed(taskId: string) {
+    return db.task.update({
       where: {
         id: taskId,
       },
@@ -151,12 +144,12 @@ export class TaskRepository {
 
   /**
    * Update the payload of a task
-   *
+   * 
    * @param taskId - The ID of the task to update
    * @param newPayload - The new payload string
    */
-  async updatePayload(taskId: string, newPayload: string) {
-    return this.deps.prismaClient.task.update({
+  static async updatePayload(taskId: string, newPayload: string) {
+    return db.task.update({
       where: {
         id: taskId,
       },
@@ -166,18 +159,18 @@ export class TaskRepository {
     });
   }
 
-  async cancel(taskId: string) {
-    return this.deps.prismaClient.task.delete({
+  static async cancel(taskId: string) {
+    return db.task.delete({
       where: {
         id: taskId,
       },
     });
   }
 
-  async cancelWithReference(referenceUid: string, type: TaskTypes): Promise<{ id: string } | null> {
-    // prismaClient.task.delete throws an error if the task does not exist, so we catch it and return null
+  static async cancelWithReference(referenceUid: string, type: TaskTypes): Promise<{ id: string } | null> {
+    // db.task.delete throws an error if the task does not exist, so we catch it and return null
     try {
-      return await this.deps.prismaClient.task.delete({
+      return await db.task.delete({
         where: {
           referenceUid_type: {
             referenceUid,
@@ -198,9 +191,9 @@ export class TaskRepository {
     }
   }
 
-  async cleanup() {
+  static async cleanup() {
     // TODO: Uncomment this later
-    // return this.deps.prismaClient.task.deleteMany({
+    // return db.task.deleteMany({
     //   where: {
     //     OR: [
     //       // Get tasks that have succeeded
@@ -212,8 +205,8 @@ export class TaskRepository {
     // });
   }
 
-  async hasNewerScanTaskForStepId(workflowStepId: number, createdAt: string) {
-    const tasks = await this.deps.prismaClient.$queryRaw<{ payload: string }[]>`
+  static async hasNewerScanTaskForStepId(workflowStepId: number, createdAt: string) {
+    const tasks = await db.$queryRaw<{ payload: string }[]>`
       SELECT "payload"
       FROM "Task"
       WHERE "type" = 'scanWorkflowBody'
@@ -232,7 +225,3 @@ export class TaskRepository {
     });
   }
 }
-
-// Export singleton instance for backward compatibility
-// This allows existing code using Task.create(), Task.succeed(), etc. to continue working
-export const Task = new TaskRepository({ prismaClient: prisma });
